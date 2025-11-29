@@ -1,3 +1,24 @@
 screenshots/
 
+# Build artifacts (Go / Windows)
+cmd.exe
+*.exe
+*.dll
+*.so
+*.dylib
 
+# Test & coverage outputs
+*.test
+*.out
+coverprofile.out
+coverage.out
+
+# Profiling
+*.pprof
+*.prof
+
+# Editor/OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
