@@ -14,7 +14,7 @@ func TestResolveOutputDir_PrefersFlag(t *testing.T) {
 
 	got := resolveOutputDir(`C:\custom\out`, func(string) (string, bool) {
 		return `C:\env\out`, true
-	})
+	}, `C:\config\out`)
 	if got != `C:\custom\out` {
 		t.Fatalf("got=%q want=%q", got, `C:\custom\out`)
 	}
@@ -28,16 +28,25 @@ func TestResolveOutputDir_PrefersEnvOverDefault(t *testing.T) {
 			t.Fatalf("unexpected env key: %q", key)
 		}
 		return `C:\env\out`, true
-	})
+	}, `C:\config\out`)
 	if got != `C:\env\out` {
 		t.Fatalf("got=%q want=%q", got, `C:\env\out`)
+	}
+}
+
+func TestResolveOutputDir_PrefersConfigOverDefault(t *testing.T) {
+	t.Parallel()
+
+	got := resolveOutputDir("", func(string) (string, bool) { return "", false }, `C:\config\out`)
+	if got != `C:\config\out` {
+		t.Fatalf("got=%q want=%q", got, `C:\config\out`)
 	}
 }
 
 func TestResolveOutputDir_Default(t *testing.T) {
 	t.Parallel()
 
-	got := resolveOutputDir("", func(string) (string, bool) { return "", false })
+	got := resolveOutputDir("", func(string) (string, bool) { return "", false }, "")
 	if got == "" {
 		t.Fatalf("expected non-empty default output dir")
 	}

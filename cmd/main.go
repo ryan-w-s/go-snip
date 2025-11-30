@@ -11,13 +11,16 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/kbinani/screenshot"
 	"golang.design/x/hotkey"
 
 	"go-snip/internal/capture"
+	"go-snip/internal/config"
 	"go-snip/internal/overlay"
+	"go-snip/internal/ui"
 	"go-snip/internal/utils"
 )
 
@@ -28,7 +31,8 @@ func main() {
 	flag.StringVar(&outFlag, "out", "", "Output directory for screenshots (overrides GO_SNIP_OUT)")
 	flag.Parse()
 
-	outDir := resolveOutputDir(outFlag, os.LookupEnv)
+	cfgPath, cfg := loadConfig()
+	outDir := resolveOutputDir(outFlag, os.LookupEnv, cfg.OutputDir)
 	if err := utils.EnsureDir(outDir); err != nil {
 		log.Fatalf("failed to create output dir %q: %v", outDir, err)
 	}
@@ -36,28 +40,46 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	if err := run(ctx, outDir, time.Now, os.Stdout); err != nil && !errors.Is(err, context.Canceled) {
+	if err := runEntry(ctx, outDir, cfgPath, cfg, time.Now, os.Stdout); err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatalf("go-snip: %v", err)
 	}
 }
 
-func resolveOutputDir(flagOut string, lookupEnv func(string) (string, bool)) string {
+func resolveOutputDir(flagOut string, lookupEnv func(string) (string, bool), configOut string) string {
 	if strings.TrimSpace(flagOut) != "" {
 		return flagOut
 	}
 	if v, ok := lookupEnv(outputDirEnv); ok && strings.TrimSpace(v) != "" {
 		return v
 	}
+	if v := strings.TrimSpace(configOut); v != "" {
+		return v
+	}
 	return utils.DefaultOutputDir()
 }
 
-func run(ctx context.Context, outDir string, now func() time.Time, out io.Writer) error {
+func loadConfig() (path string, cfg config.Config) {
+	p, err := config.DefaultPath()
+	if err != nil {
+		log.Printf("config path unavailable: %v", err)
+		return "", config.Config{}
+	}
+	c, err := config.Load(p)
+	if err != nil {
+		log.Printf("failed to load config %q: %v", p, err)
+		return p, config.Config{}
+	}
+	return p, c
+}
+
+func runHotkeys(ctx context.Context, initialOutDir string, cfgPath string, cfg config.Config, now func() time.Time, out io.Writer) error {
 	if out == nil {
 		out = io.Discard
 	}
 
 	fullHK := hotkey.New([]hotkey.Modifier{hotkey.ModCtrl, hotkey.ModShift}, hotkey.Key1)
 	areaHK := hotkey.New([]hotkey.Modifier{hotkey.ModCtrl, hotkey.ModShift}, hotkey.Key2)
+	settingsHK := hotkey.New([]hotkey.Modifier{hotkey.ModCtrl, hotkey.ModShift}, hotkey.KeyS)
 
 	if err := fullHK.Register(); err != nil {
 		return fmt.Errorf("register fullscreen hotkey: %w", err)
@@ -69,19 +91,27 @@ func run(ctx context.Context, outDir string, now func() time.Time, out io.Writer
 	}
 	defer areaHK.Unregister()
 
+	if err := settingsHK.Register(); err != nil {
+		return fmt.Errorf("register settings hotkey: %w", err)
+	}
+	defer settingsHK.Unregister()
+
+	var outDir atomic.Value
+	outDir.Store(initialOutDir)
+
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-fullHK.Keydown():
-			path, err := handleFull(outDir, now)
+			path, err := handleFull(outDir.Load().(string), now)
 			if err != nil {
 				log.Printf("fullscreen capture failed: %v", err)
 				continue
 			}
 			fmt.Fprintln(out, path)
 		case <-areaHK.Keydown():
-			path, cancelled, err := handleArea(outDir, now)
+			path, cancelled, err := handleArea(outDir.Load().(string), now)
 			if cancelled {
 				continue
 			}
@@ -94,6 +124,40 @@ func run(ctx context.Context, outDir string, now func() time.Time, out io.Writer
 				continue
 			}
 			fmt.Fprintln(out, path)
+		case <-settingsHK.Keydown():
+			current := outDir.Load().(string)
+			newOut, saved, err := ui.ShowSettings(current)
+			if err != nil {
+				if errors.Is(err, ui.ErrSettingsUnavailable) {
+					log.Printf("settings unavailable (build with -tags=fyne): %v", err)
+				} else {
+					log.Printf("settings failed: %v", err)
+				}
+				continue
+			}
+			if !saved {
+				continue
+			}
+
+			raw := strings.TrimSpace(newOut)
+			effective := raw
+			if effective == "" {
+				effective = utils.DefaultOutputDir()
+			}
+			if err := utils.EnsureDir(effective); err != nil {
+				log.Printf("failed to create output dir %q: %v", effective, err)
+				continue
+			}
+
+			outDir.Store(effective)
+
+			// Persist (best-effort).
+			cfg.OutputDir = raw
+			if strings.TrimSpace(cfgPath) != "" {
+				if err := config.Save(cfgPath, cfg); err != nil {
+					log.Printf("failed to save config %q: %v", cfgPath, err)
+				}
+			}
 		}
 	}
 }

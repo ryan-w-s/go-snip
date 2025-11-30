@@ -40,4 +40,5 @@ go-snip/
 - Run `go vet` to run the linter
 - Run `go test` to run the tests
 - Run `go build` to build the binary
-- After making changes, be sure to run some of the above commands to ensure the code is clean and working.
+- Run `make sanity-fyne` to run all of the above commands
+- After making changes, be sure to run `make sanity-fyne` to ensure the code is clean and working.

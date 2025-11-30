@@ -4,12 +4,12 @@
 package overlay
 
 import (
+	"errors"
 	"image"
 	"image/color"
 	"sync"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/widget"
@@ -28,6 +28,15 @@ type selectionResult struct {
 // The returned rectangle is in screen coordinates compatible with screenshot.CaptureRect.
 // If the user cancels (Esc or closing the window), cancelled is true.
 func SelectArea() (rect image.Rectangle, cancelled bool, err error) {
+	a := fyne.CurrentApp()
+	if a == nil {
+		return image.Rectangle{}, false, ErrSelectionUnavailable
+	}
+	d := a.Driver()
+	if d == nil {
+		return image.Rectangle{}, false, errors.New("overlay: fyne driver unavailable (app not running?)")
+	}
+
 	n := screenshot.NumActiveDisplays()
 	if n <= 0 {
 		return image.Rectangle{}, false, ErrNoActiveDisplays
@@ -39,61 +48,47 @@ func SelectArea() (rect image.Rectangle, cancelled bool, err error) {
 		return image.Rectangle{}, false, err
 	}
 
-	a := fyne.CurrentApp()
-	createdApp := false
-	if a == nil {
-		a = app.New()
-		createdApp = true
-	}
-
-	w := a.NewWindow("go-snip: select area")
-	w.SetPadded(false)
-	w.SetFullScreen(true)
-
 	done := make(chan selectionResult, 1)
 	var once sync.Once
-
-	finish := func(res selectionResult) {
+	send := func(res selectionResult) {
 		once.Do(func() {
-			// Always deliver a result.
 			select {
 			case done <- res:
 			default:
 			}
-			// Close the window; if we created the app, also stop the event loop.
-			w.Close()
-			if createdApp {
-				a.Quit()
-			}
 		})
 	}
 
-	selector := newSelectionWidget(bgImg, displayBounds, finish)
-	w.SetContent(selector)
+	d.DoFromGoroutine(func() {
+		w := a.NewWindow("go-snip: select area")
+		w.SetPadded(false)
+		w.SetFullScreen(true)
 
-	// Escape cancels selection.
-	w.Canvas().SetOnTypedKey(func(ev *fyne.KeyEvent) {
-		if ev == nil {
-			return
+		finish := func(r image.Rectangle, cancelled bool) {
+			send(selectionResult{rect: r, cancelled: cancelled})
+			w.Close()
 		}
-		if ev.Name == fyne.KeyEscape {
-			finish(selectionResult{cancelled: true})
-		}
-	})
 
-	// If the user closes the window directly, treat as cancelled.
-	w.SetOnClosed(func() {
-		finish(selectionResult{cancelled: true})
-	})
+		selector := newSelectionWidget(bgImg, displayBounds, finish)
+		w.SetContent(selector)
 
-	if createdApp {
-		// Run the UI loop on this goroutine (Fyne prefers the main thread).
-		w.ShowAndRun()
-		res := <-done
-		return res.rect, res.cancelled, res.err
-	}
+		// Escape cancels selection.
+		w.Canvas().SetOnTypedKey(func(ev *fyne.KeyEvent) {
+			if ev == nil {
+				return
+			}
+			if ev.Name == fyne.KeyEscape {
+				finish(image.Rectangle{}, true)
+			}
+		})
 
-	w.Show()
+		w.SetOnClosed(func() {
+			send(selectionResult{cancelled: true})
+		})
+
+		w.Show()
+	}, true)
+
 	res := <-done
 	return res.rect, res.cancelled, res.err
 }
@@ -108,10 +103,10 @@ type selectionWidget struct {
 	current  fyne.Position
 	hasStart bool
 
-	finish func(selectionResult)
+	finish func(rect image.Rectangle, cancelled bool)
 }
 
-func newSelectionWidget(bgImg image.Image, displayBounds image.Rectangle, finish func(selectionResult)) *selectionWidget {
+func newSelectionWidget(bgImg image.Image, displayBounds image.Rectangle, finish func(rect image.Rectangle, cancelled bool)) *selectionWidget {
 	w := &selectionWidget{
 		bgImg:         bgImg,
 		displayBounds: displayBounds,
@@ -172,10 +167,10 @@ func (w *selectionWidget) finalize() {
 		w.displayBounds,
 	)
 	if r.Dx() <= 0 || r.Dy() <= 0 {
-		w.finish(selectionResult{cancelled: true})
+		w.finish(image.Rectangle{}, true)
 		return
 	}
-	w.finish(selectionResult{rect: r})
+	w.finish(r, false)
 }
 
 func (w *selectionWidget) CreateRenderer() fyne.WidgetRenderer {
