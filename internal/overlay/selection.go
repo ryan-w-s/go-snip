@@ -32,8 +32,7 @@ func SelectArea() (rect image.Rectangle, cancelled bool, err error) {
 	if a == nil {
 		return image.Rectangle{}, false, ErrSelectionUnavailable
 	}
-	d := a.Driver()
-	if d == nil {
+	if a.Driver() == nil {
 		return image.Rectangle{}, false, errors.New("overlay: fyne driver unavailable (app not running?)")
 	}
 
@@ -59,7 +58,9 @@ func SelectArea() (rect image.Rectangle, cancelled bool, err error) {
 		})
 	}
 
-	d.DoFromGoroutine(func() {
+	// Important: Fyne UI must be mutated on the main/UI goroutine. Using fyne.DoAndWait
+	// keeps us compatible with Fyne's thread-safety checks (and avoids window lifecycle hangs).
+	fyne.DoAndWait(func() {
 		w := a.NewWindow("go-snip: select area")
 		w.SetPadded(false)
 		w.SetFullScreen(true)
@@ -87,7 +88,7 @@ func SelectArea() (rect image.Rectangle, cancelled bool, err error) {
 		})
 
 		w.Show()
-	}, true)
+	})
 
 	res := <-done
 	return res.rect, res.cancelled, res.err

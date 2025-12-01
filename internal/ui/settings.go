@@ -28,8 +28,7 @@ func ShowSettings(initialOutDir string) (newOutDir string, saved bool, err error
 	if a == nil {
 		return "", false, ErrSettingsUnavailable
 	}
-	d := a.Driver()
-	if d == nil {
+	if a.Driver() == nil {
 		return "", false, errors.New("ui: fyne driver unavailable (app not running?)")
 	}
 
@@ -44,7 +43,9 @@ func ShowSettings(initialOutDir string) (newOutDir string, saved bool, err error
 		})
 	}
 
-	d.DoFromGoroutine(func() {
+	// Important: Fyne UI must be mutated on the main/UI goroutine. Using fyne.DoAndWait
+	// keeps us compatible with Fyne's thread-safety checks (and avoids window lifecycle hangs).
+	fyne.DoAndWait(func() {
 		w := a.NewWindow("go-snip: settings")
 		w.Resize(fyne.NewSize(520, 180))
 
@@ -87,7 +88,7 @@ func ShowSettings(initialOutDir string) (newOutDir string, saved bool, err error
 		)
 		w.SetContent(container.NewPadded(form))
 		w.Show()
-	}, true)
+	})
 
 	res := <-done
 	return res.outDir, res.saved, res.err
