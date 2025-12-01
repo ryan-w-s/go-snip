@@ -55,15 +55,24 @@ func PromptSave(img image.Image) (name string, save bool, err error) {
 		nameEntry := widget.NewEntry()
 		nameEntry.SetPlaceHolder("Optional name (appended to filename)")
 
-		saveBtn := widget.NewButton("Save", func() {
+		doSave := func() {
 			send(promptResult{name: strings.TrimSpace(nameEntry.Text), save: true})
 			w.Close()
+		}
+
+		saveBtn := widget.NewButton("Save", func() {
+			doSave()
 		})
 
 		deleteBtn := widget.NewButton("Delete", func() {
 			send(promptResult{save: false})
 			w.Close()
 		})
+
+		// Hitting Enter in the name field saves.
+		nameEntry.OnSubmitted = func(string) {
+			doSave()
+		}
 
 		w.SetOnClosed(func() {
 			send(promptResult{save: false})
