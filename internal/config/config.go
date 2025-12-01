@@ -13,6 +13,10 @@ type Config struct {
 	// OutputDir is the directory where screenshots are saved.
 	// If empty, callers should fall back to other sources (env/flags/default).
 	OutputDir string `json:"outputDir"`
+
+	// PostCapturePrompt enables showing a post-capture dialog that lets the user
+	// preview, name, and choose Save/Delete before writing the file.
+	PostCapturePrompt bool `json:"postCapturePrompt"`
 }
 
 // DefaultPath returns the per-user config file path:

@@ -104,14 +104,19 @@ func runHotkeys(ctx context.Context, initialOutDir string, cfgPath string, cfg c
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-fullHK.Keydown():
-			path, err := handleFull(outDir.Load().(string), now)
+			path, cancelled, err := handleFull(outDir.Load().(string), cfg.PostCapturePrompt, now)
+			if cancelled {
+				continue
+			}
 			if err != nil {
 				log.Printf("fullscreen capture failed: %v", err)
 				continue
 			}
-			fmt.Fprintln(out, path)
+			if path != "" {
+				fmt.Fprintln(out, path)
+			}
 		case <-areaHK.Keydown():
-			path, cancelled, err := handleArea(outDir.Load().(string), now)
+			path, cancelled, err := handleArea(outDir.Load().(string), cfg.PostCapturePrompt, now)
 			if cancelled {
 				continue
 			}
@@ -123,10 +128,12 @@ func runHotkeys(ctx context.Context, initialOutDir string, cfgPath string, cfg c
 				}
 				continue
 			}
-			fmt.Fprintln(out, path)
+			if path != "" {
+				fmt.Fprintln(out, path)
+			}
 		case <-settingsHK.Keydown():
 			current := outDir.Load().(string)
-			newOut, saved, err := ui.ShowSettings(current)
+			newCfg, saved, err := ui.ShowSettings(current, cfg.PostCapturePrompt)
 			if err != nil {
 				if errors.Is(err, ui.ErrSettingsUnavailable) {
 					log.Printf("settings unavailable (build with -tags=fyne): %v", err)
@@ -139,7 +146,7 @@ func runHotkeys(ctx context.Context, initialOutDir string, cfgPath string, cfg c
 				continue
 			}
 
-			raw := strings.TrimSpace(newOut)
+			raw := strings.TrimSpace(newCfg.OutputDir)
 			effective := raw
 			if effective == "" {
 				effective = utils.DefaultOutputDir()
@@ -152,6 +159,7 @@ func runHotkeys(ctx context.Context, initialOutDir string, cfgPath string, cfg c
 			outDir.Store(effective)
 
 			// Persist (best-effort).
+			cfg = newCfg
 			cfg.OutputDir = raw
 			if strings.TrimSpace(cfgPath) != "" {
 				if err := config.Save(cfgPath, cfg); err != nil {
@@ -162,24 +170,55 @@ func runHotkeys(ctx context.Context, initialOutDir string, cfgPath string, cfg c
 	}
 }
 
-func handleFull(outDir string, now func() time.Time) (savedPath string, err error) {
+func handleFull(outDir string, postCapturePrompt bool, now func() time.Time) (savedPath string, cancelled bool, err error) {
 	img, err := capture.CaptureDisplay(0)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 
-	dest := utils.UniquePath(outDir, now(), func(p string) bool {
+	t := now()
+	if postCapturePrompt {
+		name, save, err := ui.PromptSave(img)
+		if err != nil {
+			// Don't lose the capture just because the prompt UI failed.
+			log.Printf("post-capture prompt failed (saving anyway): %v", err)
+		} else if !save {
+			return "", true, nil
+		} else {
+			if utils.SanitizeFilenameComponent(name) != "" {
+				base := utils.BaseNameForTimeAndName(t, name)
+				dest := utils.UniquePathWithBase(outDir, base, func(p string) bool {
+					_, statErr := os.Stat(p)
+					return statErr == nil
+				})
+				if err := utils.SavePNG(img, dest); err != nil {
+					return "", false, err
+				}
+				return dest, false, nil
+			}
+			// Empty (or fully-sanitized-to-empty) name: keep the existing timestamp-only scheme.
+			dest := utils.UniquePath(outDir, t, func(p string) bool {
+				_, statErr := os.Stat(p)
+				return statErr == nil
+			})
+			if err := utils.SavePNG(img, dest); err != nil {
+				return "", false, err
+			}
+			return dest, false, nil
+		}
+	}
+
+	dest := utils.UniquePath(outDir, t, func(p string) bool {
 		_, statErr := os.Stat(p)
 		return statErr == nil
 	})
-
 	if err := utils.SavePNG(img, dest); err != nil {
-		return "", err
+		return "", false, err
 	}
-	return dest, nil
+	return dest, false, nil
 }
 
-func handleArea(outDir string, now func() time.Time) (savedPath string, cancelled bool, err error) {
+func handleArea(outDir string, postCapturePrompt bool, now func() time.Time) (savedPath string, cancelled bool, err error) {
 	rect, cancelled, err := overlay.SelectArea()
 	if err != nil {
 		return "", false, err
@@ -200,7 +239,37 @@ func handleArea(outDir string, now func() time.Time) (savedPath string, cancelle
 		return "", false, err
 	}
 
-	dest := utils.UniquePath(outDir, now(), func(p string) bool {
+	t := now()
+	if postCapturePrompt {
+		name, save, err := ui.PromptSave(cropped)
+		if err != nil {
+			log.Printf("post-capture prompt failed (saving anyway): %v", err)
+		} else if !save {
+			return "", true, nil
+		} else {
+			if utils.SanitizeFilenameComponent(name) != "" {
+				base := utils.BaseNameForTimeAndName(t, name)
+				dest := utils.UniquePathWithBase(outDir, base, func(p string) bool {
+					_, statErr := os.Stat(p)
+					return statErr == nil
+				})
+				if err := utils.SavePNG(cropped, dest); err != nil {
+					return "", false, err
+				}
+				return dest, false, nil
+			}
+			dest := utils.UniquePath(outDir, t, func(p string) bool {
+				_, statErr := os.Stat(p)
+				return statErr == nil
+			})
+			if err := utils.SavePNG(cropped, dest); err != nil {
+				return "", false, err
+			}
+			return dest, false, nil
+		}
+	}
+
+	dest := utils.UniquePath(outDir, t, func(p string) bool {
 		_, statErr := os.Stat(p)
 		return statErr == nil
 	})

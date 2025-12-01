@@ -13,23 +13,25 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
+
+	"go-snip/internal/config"
 )
 
 type settingsResult struct {
-	outDir string
-	saved  bool
-	err    error
+	cfg   config.Config
+	saved bool
+	err   error
 }
 
-// ShowSettings opens a settings window (currently only output directory).
+// ShowSettings opens a settings window.
 // Closing the window returns saved=false unless the user clicks Save.
-func ShowSettings(initialOutDir string) (newOutDir string, saved bool, err error) {
+func ShowSettings(initialOutDir string, initialPostCapturePrompt bool) (newCfg config.Config, saved bool, err error) {
 	a := fyne.CurrentApp()
 	if a == nil {
-		return "", false, ErrSettingsUnavailable
+		return config.Config{}, false, ErrSettingsUnavailable
 	}
 	if a.Driver() == nil {
-		return "", false, errors.New("ui: fyne driver unavailable (app not running?)")
+		return config.Config{}, false, errors.New("ui: fyne driver unavailable (app not running?)")
 	}
 
 	done := make(chan settingsResult, 1)
@@ -47,11 +49,14 @@ func ShowSettings(initialOutDir string) (newOutDir string, saved bool, err error
 	// keeps us compatible with Fyne's thread-safety checks (and avoids window lifecycle hangs).
 	fyne.DoAndWait(func() {
 		w := a.NewWindow("go-snip: settings")
-		w.Resize(fyne.NewSize(520, 180))
+		w.Resize(fyne.NewSize(560, 240))
 
 		outEntry := widget.NewEntry()
 		outEntry.SetText(initialOutDir)
 		outEntry.SetPlaceHolder("Output directory (e.g. C:\\screenshots)")
+
+		postPrompt := widget.NewCheck("Ask for a name after capture (preview + Save/Delete)", func(bool) {})
+		postPrompt.SetChecked(initialPostCapturePrompt)
 
 		browseBtn := widget.NewButton("Browse…", func() {
 			fd := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
@@ -69,7 +74,13 @@ func ShowSettings(initialOutDir string) (newOutDir string, saved bool, err error
 		})
 
 		saveBtn := widget.NewButton("Save", func() {
-			send(settingsResult{outDir: strings.TrimSpace(outEntry.Text), saved: true})
+			send(settingsResult{
+				cfg: config.Config{
+					OutputDir:         strings.TrimSpace(outEntry.Text),
+					PostCapturePrompt: postPrompt.Checked,
+				},
+				saved: true,
+			})
 			w.Close()
 		})
 
@@ -84,6 +95,8 @@ func ShowSettings(initialOutDir string) (newOutDir string, saved bool, err error
 		form := container.NewVBox(
 			widget.NewLabel("Output directory"),
 			container.NewBorder(nil, nil, nil, browseBtn, outEntry),
+			widget.NewSeparator(),
+			postPrompt,
 			container.NewHBox(layout.NewSpacer(), closeBtn, saveBtn),
 		)
 		w.SetContent(container.NewPadded(form))
@@ -91,5 +104,5 @@ func ShowSettings(initialOutDir string) (newOutDir string, saved bool, err error
 	})
 
 	res := <-done
-	return res.outDir, res.saved, res.err
+	return res.cfg, res.saved, res.err
 }

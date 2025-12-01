@@ -39,7 +39,7 @@ func TestSaveAndLoad_RoundTrip(t *testing.T) {
 	t.Parallel()
 
 	p := filepath.Join(t.TempDir(), "config.json")
-	orig := Config{OutputDir: `C:\some\dir`}
+	orig := Config{OutputDir: `C:\some\dir`, PostCapturePrompt: true}
 
 	if err := Save(p, orig); err != nil {
 		t.Fatalf("Save() error: %v", err)
@@ -54,5 +54,25 @@ func TestSaveAndLoad_RoundTrip(t *testing.T) {
 	}
 	if got != orig {
 		t.Fatalf("roundtrip mismatch got=%+v want=%+v", got, orig)
+	}
+}
+
+func TestLoad_MissingPostCapturePromptDefaultsFalse(t *testing.T) {
+	t.Parallel()
+
+	p := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(p, []byte("{\n  \"outputDir\": \"C:\\\\out\"\n}\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	got, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if got.OutputDir != `C:\out` {
+		t.Fatalf("OutputDir mismatch got=%q want=%q", got.OutputDir, `C:\out`)
+	}
+	if got.PostCapturePrompt {
+		t.Fatalf("expected PostCapturePrompt=false by default")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -85,6 +86,73 @@ func TestUniquePath_WithCollisions(t *testing.T) {
 
 	if got != want {
 		t.Fatalf("UniquePath() = %q, want %q", got, want)
+	}
+}
+
+func TestSanitizeFilenameComponent_Basic(t *testing.T) {
+	t.Parallel()
+
+	got := SanitizeFilenameComponent(`  foo<bar>:baz*.`)
+	want := "foo_bar__baz_"
+	if got != want {
+		t.Fatalf("SanitizeFilenameComponent() = %q, want %q", got, want)
+	}
+}
+
+func TestSanitizeFilenameComponent_ReservedWindowsNames(t *testing.T) {
+	t.Parallel()
+
+	got := SanitizeFilenameComponent("CON")
+	if got != "_CON" {
+		t.Fatalf("expected reserved name to be prefixed, got=%q", got)
+	}
+}
+
+func TestSanitizeFilenameComponent_StripsControls(t *testing.T) {
+	t.Parallel()
+
+	got := SanitizeFilenameComponent("a\x01b\x1Fc")
+	if got != "abc" {
+		t.Fatalf("expected control chars removed, got=%q", got)
+	}
+}
+
+func TestBaseNameForTimeAndName(t *testing.T) {
+	t.Parallel()
+
+	tt := time.Date(2025, 1, 2, 3, 4, 5, 678*int(time.Millisecond), time.Local)
+	got := BaseNameForTimeAndName(tt, "bug fix")
+	want := "20250102_030405_678 - bug fix"
+	if got != want {
+		t.Fatalf("BaseNameForTimeAndName() = %q, want %q", got, want)
+	}
+}
+
+func TestBaseNameForTimeAndName_EmptyNameKeepsTimestampOnly(t *testing.T) {
+	t.Parallel()
+
+	tt := time.Date(2025, 1, 2, 3, 4, 5, 678*int(time.Millisecond), time.Local)
+	got := BaseNameForTimeAndName(tt, "   ")
+	want := strings.TrimSuffix(FilenameForTime(tt), ".png")
+	if got != want {
+		t.Fatalf("BaseNameForTimeAndName() = %q, want %q", got, want)
+	}
+}
+
+func TestUniquePathWithBase_WithCollisions(t *testing.T) {
+	t.Parallel()
+
+	dir := filepath.Join("some", "dir")
+	base := "20250102_030405_678 - bug fix"
+
+	p0 := filepath.Join(dir, base+".png")
+	p1 := filepath.Join(dir, base+" - 001.png")
+
+	existsSet := map[string]bool{p0: true, p1: true}
+	got := UniquePathWithBase(dir, base, func(p string) bool { return existsSet[p] })
+	want := filepath.Join(dir, base+" - 002.png")
+	if got != want {
+		t.Fatalf("UniquePathWithBase() = %q, want %q", got, want)
 	}
 }
 
